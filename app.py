@@ -24,6 +24,7 @@ Expected response to ElevenLabs:
 
 import os
 import re
+import random
 import logging
 import requests
 from flask import Flask, request, jsonify
@@ -118,11 +119,18 @@ def caller_lookup():
             history_parts.append(f"Most recent booking: {last_booking}.")
         caller_history = " ".join(history_parts)
 
-    # Build personalised greeting
+    # Build personalised greeting — rotate variations for returning callers
     if first_name:
-        greeting = f"Hello {first_name}, lovely to hear from you again — this is Lucy at OAO, how can I help?"
+        variations = [
+            f"Good {time_of_day} {first_name}, lovely to hear from you again — this is Lucy at OAO, how can I help?",
+            f"Good {time_of_day} {first_name}! Great to have you call again — it's Lucy at OAO, what can I do for you?",
+            f"Hello {first_name}, good {time_of_day}! Always a pleasure — it's Lucy at OAO, how can I help today?",
+            f"Good {time_of_day} {first_name}, welcome back! This is Lucy at OAO — what can I help you with?",
+            f"Hello {first_name}! Good {time_of_day} — it's Lucy at OAO, lovely to hear from you. How can I help?",
+        ]
+        greeting = random.choice(variations)
     else:
-        greeting = "Hello OAO — this is Lucy, how can I help?"
+        greeting = f"Good {time_of_day}, OAO Restaurant — this is Lucy, how can I help?"
 
     logger.info(f"Returning personalised response for {full_name}: {caller_history[:80]}...")
 
@@ -138,10 +146,15 @@ def caller_lookup():
 
 def _default_response(time_of_day="day"):
     """Return standard greeting for unknown callers."""
+    new_caller_greetings = [
+        f"Good {time_of_day}, OAO Restaurant — this is Lucy, how can I help?",
+        f"Good {time_of_day}! You're through to OAO Restaurant, this is Lucy — how can I help?",
+        f"Good {time_of_day}, thanks for calling OAO — it's Lucy, how can I help you today?",
+    ]
     return jsonify({
         "dynamic_variables": {
             "caller_history": "No previous bookings on record.",
-            "greeting": "Hello OAO — this is Lucy, how can I help?"
+            "greeting": random.choice(new_caller_greetings)
         }
     }), 200
 
