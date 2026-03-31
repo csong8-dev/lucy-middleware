@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: lucy-caller-lookup
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 10
+    envVars:
+      - key: GHL_API_KEY
+        sync: false
+      - key: GHL_LOCATION_ID
+        value: YOHjoiCFRkHFJV8uA3tl
