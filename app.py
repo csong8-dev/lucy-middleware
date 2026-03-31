@@ -120,15 +120,9 @@ def caller_lookup():
 
     # Build personalised greeting
     if first_name:
-        greeting = (
-            f"Hello {first_name}, lovely to hear from you again — "
-            f"this is Lucy at OAO Restaurant, how can I help you today?"
-        )
+        greeting = f"Hello {first_name}, lovely to hear from you again — this is Lucy at OAO, how can I help?"
     else:
-        greeting = (
-            f"Good {time_of_day}, you're through to OAO Restaurant — "
-            f"this is Lucy, how can I help you today?"
-        )
+        greeting = "Hello OAO — this is Lucy, how can I help?"
 
     logger.info(f"Returning personalised response for {full_name}: {caller_history[:80]}...")
 
@@ -144,14 +138,10 @@ def caller_lookup():
 
 def _default_response(time_of_day="day"):
     """Return standard greeting for unknown callers."""
-    greeting = (
-        f"Good {time_of_day}, you're through to OAO Restaurant — "
-        f"this is Lucy, how can I help you today?"
-    )
     return jsonify({
         "dynamic_variables": {
-            "caller_history": "No previous contact record found. This appears to be a new caller.",
-            "greeting": greeting
+            "caller_history": "No previous bookings on record.",
+            "greeting": "Hello OAO — this is Lucy, how can I help?"
         }
     }), 200
 
