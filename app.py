@@ -134,10 +134,16 @@ def caller_lookup():
 
     logger.info(f"Returning personalised response for {full_name}: {caller_history[:80]}...")
 
+    # Format current date/time for Lucy's prompt
+    day = now_uk.day
+    suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    current_datetime = now_uk.strftime(f"%A {day}{suffix} %B %Y, %H:%M BST")
+
     return jsonify({
         "dynamic_variables": {
             "caller_history": caller_history,
-            "greeting": greeting
+            "greeting": greeting,
+            "current_datetime": current_datetime
         }
     }), 200
 
@@ -151,10 +157,18 @@ def _default_response(time_of_day="day"):
         f"Good {time_of_day}! You're through to OAO Restaurant, this is Lucy — how can I help?",
         f"Good {time_of_day}, thanks for calling OAO — it's Lucy, how can I help you today?",
     ]
+    # Format current date/time
+    uk_tz = pytz.timezone("Europe/London")
+    now_uk = datetime.now(uk_tz)
+    day = now_uk.day
+    suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    current_datetime = now_uk.strftime(f"%A {day}{suffix} %B %Y, %H:%M BST")
+
     return jsonify({
         "dynamic_variables": {
             "caller_history": "No previous bookings on record.",
-            "greeting": random.choice(new_caller_greetings)
+            "greeting": random.choice(new_caller_greetings),
+            "current_datetime": current_datetime
         }
     }), 200
 
