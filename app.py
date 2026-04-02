@@ -27,6 +27,8 @@ import re
 import random
 import logging
 import requests
+import threading
+import time
 from flask import Flask, request, jsonify
 from datetime import datetime
 import pytz
@@ -34,6 +36,27 @@ import pytz
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ── Self-ping keep-alive (prevents Render free tier from sleeping) ─────────────
+SELF_URL = os.environ.get("SELF_URL", "https://lucy-caller-lookup.onrender.com/health")
+PING_INTERVAL = 14 * 60  # 14 minutes
+
+def _self_ping_loop():
+    """Background thread that pings this service every 14 minutes to prevent sleep."""
+    # Wait 60s after startup before first ping (let the server fully start)
+    time.sleep(60)
+    while True:
+        try:
+            resp = requests.get(SELF_URL, timeout=10)
+            logger.info(f"[keep-alive] Self-ping OK — HTTP {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"[keep-alive] Self-ping failed: {e}")
+        time.sleep(PING_INTERVAL)
+
+# Start the keep-alive thread as a daemon (dies cleanly when the app exits)
+_ping_thread = threading.Thread(target=_self_ping_loop, daemon=True, name="keep-alive")
+_ping_thread.start()
+logger.info(f"[keep-alive] Background ping thread started — pinging {SELF_URL} every {PING_INTERVAL//60} minutes")
 
 # ── Config (set as environment variables in production) ──────────────────────
 GHL_API_KEY     = os.environ.get("GHL_API_KEY", "")
