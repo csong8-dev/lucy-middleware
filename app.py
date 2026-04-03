@@ -74,11 +74,11 @@ CLOSED_DATES = [
     ("2026-04-07", "Tuesday — closed for Easter bank holiday week (extra rest day after Easter Monday)"),
     ("2026-04-08", "Wednesday — one-off closure"),
     # Add future special closures below this line:
-    # ("2026-05-05", "Tuesday — closed for Early May bank holiday week"),
-    # ("2026-05-26", "Tuesday — closed for Spring bank holiday week"),
-    # ("2026-09-01", "Tuesday — closed for Summer bank holiday week"),
-    # ("2026-12-25", "Christmas Day — closed"),
-    # ("2026-12-26", "Boxing Day — closed"),
+    ("2026-05-05", "Tuesday — closed for Early May bank holiday week"),
+    ("2026-05-26", "Tuesday — closed for Spring bank holiday week"),
+    ("2026-09-01", "Tuesday — closed for Summer bank holiday week"),
+    ("2026-12-25", "Christmas Day — closed"),
+    ("2026-12-26", "Boxing Day — closed"),
 ]
 
 # ── Health check ─────────────────────────────────────────────────────────────
