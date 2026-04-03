@@ -131,23 +131,29 @@ def watchdog():
         return jsonify({"status": "error", "reason": str(e)}), 500
 
     data = resp.json()
+    ps = data.get("platform_settings", {})
     current_webhook = (
-        data
-        .get("platform_settings", {})
+        ps
         .get("workspace_overrides", {})
         .get("conversation_initiation_client_data_webhook") or {}
     )
     current_url = current_webhook.get("url", "")
+    # Also check the enabled flag (lives under overrides, not workspace_overrides)
+    webhook_enabled = (
+        ps
+        .get("overrides", {})
+        .get("enable_conversation_initiation_client_data_from_webhook", False)
+    )
 
-    # ── Step 2: Check if webhook URL is correct ───────────────────────────────
-    if current_url == ELEVEN_WEBHOOK_URL:
+    # ── Step 2: Check if webhook URL is correct AND enabled ─────────────────────
+    if current_url == ELEVEN_WEBHOOK_URL and webhook_enabled:
         logger.info(f"WATCHDOG: Webhook OK — {current_url}")
         return jsonify({"status": "ok", "webhook_url": current_url}), 200
 
     # ── Step 3: Webhook is missing or wrong — restore it ─────────────────────
     logger.warning(
-        f"WATCHDOG: Webhook mismatch — found '{current_url}', "
-        f"expected '{ELEVEN_WEBHOOK_URL}'. Restoring..."
+        f"WATCHDOG: Webhook mismatch — found url='{current_url}' enabled={webhook_enabled}, "
+        f"expected url='{ELEVEN_WEBHOOK_URL}' enabled=True. Restoring..."
     )
 
     try:
