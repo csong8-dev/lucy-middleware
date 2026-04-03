@@ -67,7 +67,7 @@ GHL_HEADERS     = {
 # Past dates are automatically ignored — only dates within the next 60 days
 # are injected into Lucy's prompt.
 #
-# Standard weekly closures (Monday, Tuesday) are already in Lucy's prompt
+# Standard weekly closures (Mondays) are already in Lucy's prompt
 # and do NOT need to be listed here. Only list EXCEPTIONS and ONE-OFF dates.
 
 CLOSED_DATES = [
@@ -75,7 +75,8 @@ CLOSED_DATES = [
     ("2026-04-08", "Wednesday — one-off closure"),
     # Add future special closures below this line:
     # ("2026-05-05", "Tuesday — closed for Early May bank holiday week"),
-    # ("2026-08-25", "Tuesday — closed for Summer bank holiday week"),
+    # ("2026-05-26", "Tuesday — closed for Spring bank holiday week"),
+    # ("2026-09-01", "Tuesday — closed for Summer bank holiday week"),
     # ("2026-12-25", "Christmas Day — closed"),
     # ("2026-12-26", "Boxing Day — closed"),
 ]
