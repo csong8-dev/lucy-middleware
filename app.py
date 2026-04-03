@@ -3,7 +3,7 @@ Lucy Caller ID Lookup Middleware
 ================================
 Handles ElevenLabs "Conversation Initiation Client Data Webhook"
 Looks up the caller in GHL by phone number and returns dynamic variables
-for Lucy's prompt: caller_history and greeting.
+for Lucy's prompt: caller_history, greeting, current_datetime, special_closures.
 
 Expected inbound payload from ElevenLabs:
 {
@@ -17,7 +17,9 @@ Expected response to ElevenLabs:
 {
   "dynamic_variables": {
     "caller_history": "...",
-    "greeting": "..."
+    "greeting": "...",
+    "current_datetime": "...",
+    "special_closures": "..."
   }
 }
 
@@ -25,9 +27,14 @@ Keep-alive note:
   The self-ping background thread has been intentionally removed.
   Background threads inside Gunicorn worker processes accumulate on every
   restart/redeploy and are never cleaned up, causing the thread count to
-  grow unboundedly. Keep-alive is handled externally via a Render Cron Job
-  (see render.yaml) which pings /health every 14 minutes from outside the
-  app process. This is the correct architecture.
+  grow unboundedly  Keep-alive is handled natively by Render's built-in healthCheckPath: /health
+  setting. No thread code, no external cron, no Manus scheduled task needed.
+
+Special closures note:
+  CLOSED_DATES is the single source of truth for all special/one-off closure
+  dates. To add or remove a closure, edit the list below and push to GitHub.
+  No prompt update is required. Lucy receives the list as {{special_closures}}
+  at the start of every call. Only dates within the next 60 days are sent.
 """
 
 import os
@@ -36,7 +43,7 @@ import random
 import logging
 import requests
 from flask import Flask, request, jsonify
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import pytz
 
 app = Flask(__name__)
@@ -52,6 +59,26 @@ GHL_HEADERS     = {
     "Content-Type": "application/json",
     "Version": "2021-07-28"
 }
+
+# ── Special closure dates ─────────────────────────────────────────────────────
+# Single source of truth for all special/one-off closure dates.
+# TO ADD A CLOSURE: append a tuple ("YYYY-MM-DD", "reason") and push to GitHub.
+# TO REMOVE A CLOSURE: delete the tuple and push to GitHub.
+# Past dates are automatically ignored — only dates within the next 60 days
+# are injected into Lucy's prompt.
+#
+# Standard weekly closures (Monday, Tuesday) are already in Lucy's prompt
+# and do NOT need to be listed here. Only list EXCEPTIONS and ONE-OFF dates.
+
+CLOSED_DATES = [
+    ("2026-04-07", "Tuesday — closed for Easter bank holiday week (extra rest day after Easter Monday)"),
+    ("2026-04-08", "Wednesday — one-off closure"),
+    # Add future special closures below this line:
+    # ("2026-05-05", "Tuesday — closed for Early May bank holiday week"),
+    # ("2026-08-25", "Tuesday — closed for Summer bank holiday week"),
+    # ("2026-12-25", "Christmas Day — closed"),
+    # ("2026-12-26", "Boxing Day — closed"),
+]
 
 # ── Health check ─────────────────────────────────────────────────────────────
 @app.route("/health", methods=["GET"])
@@ -84,9 +111,12 @@ def caller_lookup():
     now_uk = datetime.now(uk_tz)
     time_of_day = _time_of_day(now_uk.hour)
 
+    current_datetime = _format_datetime(now_uk)
+    special_closures = _build_special_closures(now_uk.date())
+
     if not caller_phone:
         logger.warning("No caller phone in payload — returning default greeting")
-        return _default_response(time_of_day)
+        return _default_response(time_of_day, current_datetime, special_closures)
 
     # Normalise phone number for GHL lookup
     normalised = _normalise_phone(caller_phone)
@@ -97,7 +127,7 @@ def caller_lookup():
 
     if not contact:
         logger.info("Contact not found — new caller")
-        return _default_response(time_of_day)
+        return _default_response(time_of_day, current_datetime, special_closures)
 
     # Build personalised response
     first_name = contact.get("firstName", "") or contact.get("first_name", "")
@@ -154,19 +184,42 @@ def caller_lookup():
 
     logger.info(f"Returning personalised response for {full_name}: {caller_history[:80]}...")
 
-    # Format current date/time for Lucy's prompt
-    current_datetime = _format_datetime(now_uk)
-
     return jsonify({
         "dynamic_variables": {
             "caller_history": caller_history,
             "greeting": greeting,
-            "current_datetime": current_datetime
+            "current_datetime": current_datetime,
+            "special_closures": special_closures
         }
     }), 200
 
 
 # ── Helper functions ──────────────────────────────────────────────────────────
+
+def _build_special_closures(today: date) -> str:
+    """
+    Build a human-readable string of upcoming special closure dates
+    within the next 60 days. Returns a clear 'none' message if empty.
+    Only dates from today onwards (within 60 days) are included.
+    """
+    window_end = today + timedelta(days=60)
+    upcoming = []
+    for date_str, reason in CLOSED_DATES:
+        try:
+            closure_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            logger.warning(f"Invalid date format in CLOSED_DATES: {date_str}")
+            continue
+        if today <= closure_date <= window_end:
+            day_num  = closure_date.day
+            suffix   = "th" if 11 <= day_num <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day_num % 10, "th")
+            formatted = closure_date.strftime(f"%A {day_num}{suffix} %B %Y")
+            upcoming.append(f"{formatted} — {reason}")
+
+    if not upcoming:
+        return "No special closures in the next 60 days."
+    return "SPECIAL CLOSURE DATES (OAO is closed on these dates — do NOT accept bookings): " + "; ".join(upcoming) + "."
+
 
 def _format_datetime(now_uk) -> str:
     """Format a UK datetime as a human-readable string for Lucy's prompt."""
@@ -175,7 +228,7 @@ def _format_datetime(now_uk) -> str:
     return now_uk.strftime(f"%A {day}{suffix} %B %Y, %H:%M BST")
 
 
-def _default_response(time_of_day="day"):
+def _default_response(time_of_day="day", current_datetime="", special_closures=""):
     """Return standard greeting for unknown callers."""
     new_caller_greetings = [
         f"Good {time_of_day}, OAO Restaurant — this is Lucy, how can I help?",
@@ -184,13 +237,17 @@ def _default_response(time_of_day="day"):
     ]
     uk_tz = pytz.timezone("Europe/London")
     now_uk = datetime.now(uk_tz)
-    current_datetime = _format_datetime(now_uk)
+    if not current_datetime:
+        current_datetime = _format_datetime(now_uk)
+    if not special_closures:
+        special_closures = _build_special_closures(now_uk.date())
 
     return jsonify({
         "dynamic_variables": {
             "caller_history": "No previous bookings on record.",
             "greeting": random.choice(new_caller_greetings),
-            "current_datetime": current_datetime
+            "current_datetime": current_datetime,
+            "special_closures": special_closures
         }
     }), 200
 
