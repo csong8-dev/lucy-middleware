@@ -4,20 +4,33 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     # Single worker: stateless lightweight service — no need for multiple workers.
-    # Thread-based keep-alive removed from app.py; handled by cron job below.
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 10
     envVars:
       - key: GHL_API_KEY
         sync: false
       - key: GHL_LOCATION_ID
         value: YOHjoiCFRkHFJV8uA3tl
+      - key: ELEVEN_API_KEY
+        sync: false
+      - key: ELEVEN_AGENT_ID
+        value: agent_9501k7jqhgvkeggbkjcpc4r0m80g
+      - key: ELEVEN_WEBHOOK_URL
+        value: https://lucy-caller-lookup.onrender.com/caller-lookup
 
-  # ── Keep-alive cron job ───────────────────────────────────────────────────
-  # Replaces the background thread that was inside app.py.
-  # Pings /health every 14 minutes from outside the app process — zero threads.
+  # ── Keep-alive + webhook watchdog cron job ────────────────────────────────
+  # Pings /health every 14 minutes to keep the service warm.
+  # Also pings /watchdog which checks and auto-restores the ElevenLabs webhook
+  # URL if it has been wiped by a dashboard UI save.
   - type: cron
     name: lucy-keepalive
     env: python
     schedule: "*/14 * * * *"
     buildCommand: pip install requests
-    startCommand: python -c "import requests; r = requests.get('https://lucy-caller-lookup.onrender.com/health', timeout=10); print(f'keep-alive ping: HTTP {r.status_code}')"
+    startCommand: >
+      python -c "
+      import requests;
+      h = requests.get('https://lucy-caller-lookup.onrender.com/health', timeout=10);
+      print(f'health: HTTP {h.status_code}');
+      w = requests.get('https://lucy-caller-lookup.onrender.com/watchdog', timeout=15);
+      print(f'watchdog: HTTP {w.status_code} — {w.json()}')
+      "

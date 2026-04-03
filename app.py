@@ -60,6 +60,18 @@ GHL_HEADERS     = {
     "Version": "2021-07-28"
 }
 
+# ── ElevenLabs webhook watchdog config ───────────────────────────────────────
+# These values are the single source of truth for the webhook that ElevenLabs
+# must call before each inbound call to inject dynamic variables.
+# If the ElevenLabs dashboard ever wipes this webhook (e.g. after a UI save),
+# the /watchdog endpoint will detect and auto-restore it.
+ELEVEN_API_KEY  = os.environ.get("ELEVEN_API_KEY", "")
+ELEVEN_AGENT_ID = os.environ.get("ELEVEN_AGENT_ID", "agent_9501k7jqhgvkeggbkjcpc4r0m80g")
+ELEVEN_WEBHOOK_URL = os.environ.get(
+    "ELEVEN_WEBHOOK_URL",
+    "https://lucy-caller-lookup.onrender.com/caller-lookup"
+)
+
 # ── Special closure dates ─────────────────────────────────────────────────────
 # Single source of truth for all special/one-off closure dates.
 # TO ADD A CLOSURE: append a tuple ("YYYY-MM-DD", "reason") and push to GitHub.
@@ -85,6 +97,101 @@ CLOSED_DATES = [
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "lucy-caller-lookup"}), 200
+
+
+# ── Webhook watchdog ──────────────────────────────────────────────────────────
+@app.route("/watchdog", methods=["GET"])
+def watchdog():
+    """
+    Checks that the ElevenLabs agent's conversation initiation webhook is set
+    to the correct URL. If it is missing or wrong, restores it automatically.
+
+    Called by Render's cron job every 14 minutes alongside /health.
+    Also safe to call manually at any time.
+    """
+    if not ELEVEN_API_KEY:
+        logger.warning("WATCHDOG: ELEVEN_API_KEY not set — skipping check")
+        return jsonify({"status": "skipped", "reason": "ELEVEN_API_KEY not configured"}), 200
+
+    eleven_headers = {
+        "xi-api-key": ELEVEN_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    # ── Step 1: Fetch current agent config ───────────────────────────────────
+    try:
+        resp = requests.get(
+            f"https://api.elevenlabs.io/v1/convai/agents/{ELEVEN_AGENT_ID}",
+            headers={"xi-api-key": ELEVEN_API_KEY},
+            timeout=10
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        logger.error(f"WATCHDOG: Failed to fetch agent config: {e}")
+        return jsonify({"status": "error", "reason": str(e)}), 500
+
+    data = resp.json()
+    current_webhook = (
+        data
+        .get("platform_settings", {})
+        .get("workspace_overrides", {})
+        .get("conversation_initiation_client_data_webhook") or {}
+    )
+    current_url = current_webhook.get("url", "")
+
+    # ── Step 2: Check if webhook URL is correct ───────────────────────────────
+    if current_url == ELEVEN_WEBHOOK_URL:
+        logger.info(f"WATCHDOG: Webhook OK — {current_url}")
+        return jsonify({"status": "ok", "webhook_url": current_url}), 200
+
+    # ── Step 3: Webhook is missing or wrong — restore it ─────────────────────
+    logger.warning(
+        f"WATCHDOG: Webhook mismatch — found '{current_url}', "
+        f"expected '{ELEVEN_WEBHOOK_URL}'. Restoring..."
+    )
+
+    try:
+        patch_resp = requests.patch(
+            f"https://api.elevenlabs.io/v1/convai/agents/{ELEVEN_AGENT_ID}",
+            headers=eleven_headers,
+            json={
+                "platform_settings": {
+                    "workspace_overrides": {
+                        "conversation_initiation_client_data_webhook": {
+                            "url": ELEVEN_WEBHOOK_URL,
+                            "request_headers": {
+                                "Content-Type": "application/json"
+                            }
+                        }
+                    }
+                }
+            },
+            timeout=10
+        )
+        patch_resp.raise_for_status()
+    except Exception as e:
+        logger.error(f"WATCHDOG: Failed to restore webhook: {e}")
+        return jsonify({"status": "error", "reason": str(e)}), 500
+
+    # ── Step 4: Verify the restore succeeded ─────────────────────────────────
+    restored_webhook = (
+        patch_resp.json()
+        .get("platform_settings", {})
+        .get("workspace_overrides", {})
+        .get("conversation_initiation_client_data_webhook") or {}
+    )
+    restored_url = restored_webhook.get("url", "")
+
+    if restored_url == ELEVEN_WEBHOOK_URL:
+        logger.info(f"WATCHDOG: Webhook restored successfully — {restored_url}")
+        return jsonify({
+            "status": "restored",
+            "previous_url": current_url or None,
+            "restored_url": restored_url
+        }), 200
+    else:
+        logger.error(f"WATCHDOG: Restore failed — URL after patch is '{restored_url}'")
+        return jsonify({"status": "error", "reason": "Restore did not take effect"}), 500
 
 
 # ── Main caller lookup endpoint ───────────────────────────────────────────────
