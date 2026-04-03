@@ -3,9 +3,21 @@ services:
     name: lucy-caller-lookup
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 10
+    # Single worker: stateless lightweight service — no need for multiple workers.
+    # Thread-based keep-alive removed from app.py; handled by cron job below.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 10
     envVars:
       - key: GHL_API_KEY
         sync: false
       - key: GHL_LOCATION_ID
         value: YOHjoiCFRkHFJV8uA3tl
+
+  # ── Keep-alive cron job ───────────────────────────────────────────────────
+  # Replaces the background thread that was inside app.py.
+  # Pings /health every 14 minutes from outside the app process — zero threads.
+  - type: cron
+    name: lucy-keepalive
+    env: python
+    schedule: "*/14 * * * *"
+    buildCommand: pip install requests
+    startCommand: python -c "import requests; r = requests.get('https://lucy-caller-lookup.onrender.com/health', timeout=10); print(f'keep-alive ping: HTTP {r.status_code}')"

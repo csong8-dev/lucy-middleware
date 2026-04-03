@@ -20,6 +20,14 @@ Expected response to ElevenLabs:
     "greeting": "..."
   }
 }
+
+Keep-alive note:
+  The self-ping background thread has been intentionally removed.
+  Background threads inside Gunicorn worker processes accumulate on every
+  restart/redeploy and are never cleaned up, causing the thread count to
+  grow unboundedly. Keep-alive is handled externally via a Render Cron Job
+  (see render.yaml) which pings /health every 14 minutes from outside the
+  app process. This is the correct architecture.
 """
 
 import os
@@ -27,8 +35,6 @@ import re
 import random
 import logging
 import requests
-import threading
-import time
 from flask import Flask, request, jsonify
 from datetime import datetime
 import pytz
@@ -36,27 +42,6 @@ import pytz
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# ── Self-ping keep-alive (prevents Render free tier from sleeping) ─────────────
-SELF_URL = os.environ.get("SELF_URL", "https://lucy-caller-lookup.onrender.com/health")
-PING_INTERVAL = 14 * 60  # 14 minutes
-
-def _self_ping_loop():
-    """Background thread that pings this service every 14 minutes to prevent sleep."""
-    # Wait 60s after startup before first ping (let the server fully start)
-    time.sleep(60)
-    while True:
-        try:
-            resp = requests.get(SELF_URL, timeout=10)
-            logger.info(f"[keep-alive] Self-ping OK — HTTP {resp.status_code}")
-        except Exception as e:
-            logger.warning(f"[keep-alive] Self-ping failed: {e}")
-        time.sleep(PING_INTERVAL)
-
-# Start the keep-alive thread as a daemon (dies cleanly when the app exits)
-_ping_thread = threading.Thread(target=_self_ping_loop, daemon=True, name="keep-alive")
-_ping_thread.start()
-logger.info(f"[keep-alive] Background ping thread started — pinging {SELF_URL} every {PING_INTERVAL//60} minutes")
 
 # ── Config (set as environment variables in production) ──────────────────────
 GHL_API_KEY     = os.environ.get("GHL_API_KEY", "")
@@ -120,27 +105,39 @@ def caller_lookup():
     full_name  = f"{first_name} {last_name}".strip() or "there"
 
     # Pull Lucy custom fields
-    custom_fields = {cf.get("id", cf.get("key", "")): cf.get("value", "") 
+    custom_fields = {cf.get("id", cf.get("key", "")): cf.get("value", "")
                      for cf in contact.get("customFields", [])}
-    
+
     # Try to get booking history from tags and custom fields
     tags = contact.get("tags", [])
     booking_count = _estimate_booking_count(tags, custom_fields)
     last_booking  = _get_last_booking(custom_fields)
 
-    # Build caller_history string
+    # Pull email and phone from contact for pre-emptive data extraction
+    contact_email = contact.get("email", "") or ""
+    contact_phone = contact.get("phone", "") or normalised
+
+    # Build caller_history string — includes contact details so Lucy never
+    # needs to ask for information she already has
+    history_parts = []
     if booking_count == 0:
-        caller_history = f"Contact exists in CRM but no confirmed bookings on record for {full_name}."
+        history_parts.append(f"Contact exists in CRM but no confirmed bookings on record for {full_name}.")
     elif booking_count == 1:
-        history_parts = [f"{full_name} has visited OAO once before."]
+        history_parts.append(f"{full_name} has visited OAO once before.")
         if last_booking:
             history_parts.append(f"Last booking: {last_booking}.")
-        caller_history = " ".join(history_parts)
     else:
-        history_parts = [f"{full_name} is a returning guest with {booking_count} visits on record."]
+        history_parts.append(f"{full_name} is a returning guest with {booking_count} visits on record.")
         if last_booking:
             history_parts.append(f"Most recent booking: {last_booking}.")
-        caller_history = " ".join(history_parts)
+
+    # Append known contact fields so Lucy can skip asking for them
+    if contact_phone:
+        history_parts.append(f"Phone on file: {contact_phone}.")
+    if contact_email:
+        history_parts.append(f"Email on file: {contact_email}.")
+
+    caller_history = " ".join(history_parts)
 
     # Build personalised greeting — rotate variations for returning callers
     if first_name:
@@ -158,9 +155,7 @@ def caller_lookup():
     logger.info(f"Returning personalised response for {full_name}: {caller_history[:80]}...")
 
     # Format current date/time for Lucy's prompt
-    day = now_uk.day
-    suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
-    current_datetime = now_uk.strftime(f"%A {day}{suffix} %B %Y, %H:%M BST")
+    current_datetime = _format_datetime(now_uk)
 
     return jsonify({
         "dynamic_variables": {
@@ -173,6 +168,13 @@ def caller_lookup():
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
+def _format_datetime(now_uk) -> str:
+    """Format a UK datetime as a human-readable string for Lucy's prompt."""
+    day = now_uk.day
+    suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return now_uk.strftime(f"%A {day}{suffix} %B %Y, %H:%M BST")
+
+
 def _default_response(time_of_day="day"):
     """Return standard greeting for unknown callers."""
     new_caller_greetings = [
@@ -180,12 +182,9 @@ def _default_response(time_of_day="day"):
         f"Good {time_of_day}! You're through to OAO Restaurant, this is Lucy — how can I help?",
         f"Good {time_of_day}, thanks for calling OAO — it's Lucy, how can I help you today?",
     ]
-    # Format current date/time
     uk_tz = pytz.timezone("Europe/London")
     now_uk = datetime.now(uk_tz)
-    day = now_uk.day
-    suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
-    current_datetime = now_uk.strftime(f"%A {day}{suffix} %B %Y, %H:%M BST")
+    current_datetime = _format_datetime(now_uk)
 
     return jsonify({
         "dynamic_variables": {
@@ -207,15 +206,11 @@ def _time_of_day(hour: int) -> str:
 
 def _normalise_phone(phone: str) -> str:
     """Normalise phone number to E.164 format for GHL lookup."""
-    # Remove all non-digit characters except leading +
     digits = re.sub(r"[^\d+]", "", phone)
-    # If starts with 07, convert to +447
     if digits.startswith("07") and not digits.startswith("+"):
         digits = "+44" + digits[1:]
-    # If starts with 447 without +, add +
     elif digits.startswith("447"):
         digits = "+" + digits
-    # If no + prefix and 10+ digits, assume UK
     elif not digits.startswith("+") and len(digits) >= 10:
         digits = "+44" + digits.lstrip("0")
     return digits
@@ -231,14 +226,14 @@ def _lookup_contact(phone: str) -> dict | None:
         }
         resp = requests.get(url, headers=GHL_HEADERS, params=params, timeout=3)
         logger.info(f"GHL lookup status: {resp.status_code}")
-        
+
         if resp.status_code == 200:
             result = resp.json()
             contact = result.get("contact")
             if contact:
                 logger.info(f"Contact found: {contact.get('id')} - {contact.get('firstName')}")
                 return contact
-        
+
         # Fallback: search contacts
         url2 = f"{GHL_BASE_URL}/contacts/"
         params2 = {
@@ -251,12 +246,12 @@ def _lookup_contact(phone: str) -> dict | None:
             contacts = resp2.json().get("contacts", [])
             if contacts:
                 return contacts[0]
-                
+
     except requests.exceptions.Timeout:
         logger.warning("GHL lookup timed out — returning default")
     except Exception as e:
         logger.error(f"GHL lookup error: {e}")
-    
+
     return None
 
 
