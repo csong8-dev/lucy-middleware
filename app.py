@@ -313,10 +313,10 @@ def caller_lookup():
 def _build_special_closures(today: date) -> str:
     """
     Build a human-readable string of upcoming special closure dates
-    within the next 60 days. Returns a clear 'none' message if empty.
-    Only dates from today onwards (within 60 days) are included.
+    within the next 365 days. Returns a clear 'none' message if empty.
+    Only dates from today onwards (within 365 days) are included.
     """
-    window_end = today + timedelta(days=60)
+    window_end = today + timedelta(days=365)
     upcoming = []
     for date_str, reason in CLOSED_DATES:
         try:
@@ -331,7 +331,7 @@ def _build_special_closures(today: date) -> str:
             upcoming.append(f"{formatted} — {reason}")
 
     if not upcoming:
-        return "No special closures in the next 60 days."
+        return "No special closures in the next 365 days."
     return "SPECIAL CLOSURE DATES (OAO is closed on these dates — do NOT accept bookings): " + "; ".join(upcoming) + "."
 
 
