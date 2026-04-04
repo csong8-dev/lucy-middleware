@@ -88,7 +88,7 @@ CLOSED_DATES = [
     # Add future special closures below this line:
     ("2026-05-05", "Tuesday — closed for Early May bank holiday week"),
     ("2026-05-26", "Tuesday — closed for Spring bank holiday week"),
-    ("2026-09-01", "Tuesday — closed for Summer bank holiday week"),
+    ("2026-09-01", "Tuesday — extra day off for Summer bank holiday week"),
     ("2026-12-25", "Christmas Day — closed"),
     ("2026-12-26", "Boxing Day — closed"),
 ]
