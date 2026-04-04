@@ -281,6 +281,12 @@ def caller_lookup():
     if contact_email:
         history_parts.append(f"Email on file: {contact_email}.")
 
+    # Append loyalty status so Lucy routes to the correct tier
+    # Tier 3 fires when caller_history contains "Loyalty programme: signed up"
+    loyalty_tags = {'loyalty_member', 'loyalty-member', 'loyalty member'}
+    if any(t.lower().strip() in loyalty_tags for t in tags):
+        history_parts.append("Loyalty programme: signed up.")
+
     caller_history = " ".join(history_parts)
 
     # Build personalised greeting — rotate variations for returning callers
